@@ -113,6 +113,242 @@ const accountUsageShape = {
   proxyType: proxyTypeSchema.optional().describe("Optional rotating proxy type filter.")
 };
 
+const browserSessionStatusSchema = z.enum([
+  "running",
+  "stopped",
+  "timedOut",
+  "failed"
+]);
+const countryCodeSchema = z.string().regex(/^[a-zA-Z]{2}$/);
+const dimensionsShape = {
+  width: z.number().int().min(320).max(7680),
+  height: z.number().int().min(240).max(4320)
+};
+const noiseModeSchema = z.enum(["auto", "noise", "off"]);
+
+const browserFingerprintSchema = z
+  .object({
+    strategy: z
+      .enum(["auto", "custom"])
+      .optional()
+      .describe("auto picks a consistent fingerprint. userAgent, screen, hardware, and masking require custom."),
+    os: z.enum(["linux", "windows", "macos", "android"]).optional(),
+    osVersion: z.string().min(1).max(64).optional().describe("Requires os."),
+    userAgent: z
+      .string()
+      .min(1)
+      .max(1024)
+      .optional()
+      .describe("Custom user agent. Requires strategy custom, os, and screen."),
+    screen: z
+      .object({
+        ...dimensionsShape,
+        devicePixelRatio: z.number().min(0.5).max(8).optional()
+      })
+      .strict()
+      .optional(),
+    locale: z.string().min(2).max(64).optional().describe("BCP-47 locale, for example en-US."),
+    timezone: z
+      .string()
+      .min(1)
+      .max(64)
+      .optional()
+      .describe("auto to match the proxy exit, or an IANA timezone."),
+    geolocation: z
+      .object({
+        mode: z.enum(["auto", "custom", "disabled"]),
+        latitude: z.number().min(-90).max(90).optional(),
+        longitude: z.number().min(-180).max(180).optional(),
+        accuracy: z.number().positive().max(100_000).optional()
+      })
+      .strict()
+      .optional()
+      .describe("Coordinates are valid only with mode custom."),
+    hardware: z
+      .object({
+        cpuCores: z.number().int().min(1).max(128).optional(),
+        memoryGb: z.number().int().min(1).max(256).optional(),
+        maxTouchPoints: z.number().int().min(0).max(20).optional()
+      })
+      .strict()
+      .optional(),
+    masking: z
+      .object({
+        canvas: noiseModeSchema.optional(),
+        webgl: z
+          .object({
+            mode: z.enum(["auto", "noise", "mask", "off"]).optional(),
+            vendor: z.string().min(1).max(256).optional(),
+            renderer: z.string().min(1).max(512).optional()
+          })
+          .strict()
+          .optional()
+          .describe("vendor and renderer go together and require mode mask."),
+        audioContext: noiseModeSchema.optional(),
+        clientRects: noiseModeSchema.optional(),
+        webrtc: z.enum(["auto", "proxy", "disabled"]).optional(),
+        mediaDevices: z
+          .object({
+            mode: z.enum(["auto", "mask", "disabled"]).optional(),
+            videoInputs: z.number().int().min(0).max(20).optional(),
+            audioInputs: z.number().int().min(0).max(20).optional(),
+            audioOutputs: z.number().int().min(0).max(20).optional()
+          })
+          .strict()
+          .optional(),
+        fonts: z
+          .object({
+            mode: z.enum(["auto", "custom"]).optional(),
+            families: z.array(z.string().min(1).max(128)).max(256).optional()
+          })
+          .strict()
+          .optional()
+      })
+      .strict()
+      .optional()
+  })
+  .strict();
+
+const browserCookieSchema = z
+  .object({
+    name: z.string().min(1).max(256),
+    value: z.string().max(16_384),
+    url: z.string().url().max(2048).optional(),
+    domain: z.string().min(1).max(253).optional(),
+    path: z.string().min(1).max(2048).optional().describe("Valid only with domain."),
+    expires: z.number().int().nonnegative().optional().describe("Unix seconds."),
+    httpOnly: z.boolean().optional(),
+    secure: z.boolean().optional(),
+    sameSite: z.enum(["strict", "lax", "none"]).optional()
+  })
+  .strict()
+  .describe("Provide exactly one of url or domain.");
+
+const browserRotatingProxySchema = z
+  .object({
+    type: proxyTypeSchema.optional().describe("Defaults to residential."),
+    location: z
+      .object({
+        countryCode: countryCodeSchema.optional(),
+        state: z.string().min(1).max(128).optional(),
+        city: z.string().min(1).max(128).optional()
+      })
+      .strict()
+      .optional()
+      .describe("city or state (not both) requires countryCode. Use list_rotating_proxy_locations."),
+    asn: z.string().regex(/^\d+$/).max(32).optional(),
+    rotation: z
+      .object({
+        mode: z.enum(["sticky", "perRequest", "interval"]).optional(),
+        intervalMinutes: z
+          .union([
+            z.literal(5),
+            z.literal(10),
+            z.literal(15),
+            z.literal(20),
+            z.literal(60)
+          ])
+          .optional()
+          .describe("Required for interval mode."),
+        stickyKey: z.string().min(1).max(128).optional().describe("Sticky mode only.")
+      })
+      .strict()
+      .optional()
+      .describe("Defaults to sticky.")
+  })
+  .strict();
+
+const browserStaticProxySchema = z
+  .object({
+    type: z.literal("static"),
+    ip: z.ipv4().describe("A static IP from list_static_proxies.")
+  })
+  .strict();
+
+const browserSessionCreateShape = {
+  settings: z
+    .object({ id: z.string().uuid() })
+    .strict()
+    .optional()
+    .describe("Reuse persistent settings from an earlier session. Cannot be combined with browser, proxy, persist, or startUrl."),
+  browser: z
+    .object({
+      viewport: z.object(dimensionsShape).strict().optional(),
+      fingerprint: browserFingerprintSchema.optional()
+    })
+    .strict()
+    .optional()
+    .describe("Viewport and fingerprint for newly created settings."),
+  storage: z
+    .object({
+      cookies: z
+        .object({
+          mode: z.enum(["merge", "replace"]).optional().describe("Defaults to merge."),
+          items: z.array(browserCookieSchema).max(100)
+        })
+        .strict()
+        .optional()
+    })
+    .strict()
+    .optional()
+    .describe("Cookies to load before the session starts."),
+  proxy: z
+    .union([browserStaticProxySchema, browserRotatingProxySchema])
+    .optional()
+    .describe("Rotating proxy (residential by default), or type static with one of the account's static IPs."),
+  persist: z
+    .object({
+      ttlSeconds: z.number().int().min(60).max(86_400)
+    })
+    .strict()
+    .optional()
+    .describe("Keep settings.id reusable for this long after the session ends. Omit for burner state."),
+  runtime: z
+    .object({
+      timeoutSeconds: z
+        .number()
+        .int()
+        .min(60)
+        .max(21_600)
+        .optional()
+        .describe("Hard session lifetime. Defaults to 600."),
+      keepAlive: z
+        .boolean()
+        .optional()
+        .describe("Keep the browser running after the CDP client disconnects. Defaults to false.")
+    })
+    .strict()
+    .optional(),
+  startUrl: z
+    .string()
+    .url()
+    .max(2048)
+    .optional()
+    .describe("http(s) URL the browser opens on launch."),
+  metadata: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe("Free-form JSON stored with the session, up to 4 KiB.")
+};
+
+const browserSessionListShape = {
+  status: browserSessionStatusSchema.optional().describe("Optional status filter."),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("nextCursor from a previous list_browser_sessions response."),
+  limit: z.number().int().min(1).max(100).optional().describe("Page size. Defaults to 20.")
+};
+
+const browserSessionIdShape = {
+  sessionId: z.string().uuid().describe("Browser session id.")
+};
+
+const browserSettingsIdShape = {
+  settingsId: z.string().uuid().describe("Saved browser settings id (session settings.id).")
+};
+
 export const fetchWebDataInputSchema = z.object(fetchWebDataShape).strict();
 export const rotatingConnectionInputSchema = z
   .object(rotatingConnectionShape)
@@ -141,6 +377,18 @@ export const checkProxyInputSchema = z
   });
 export const accountBalancesInputSchema = z.object(accountBalancesShape).strict();
 export const accountUsageInputSchema = z.object(accountUsageShape).strict();
+export const browserSessionCreateInputSchema = z
+  .object(browserSessionCreateShape)
+  .strict();
+export const browserSessionListInputSchema = z
+  .object(browserSessionListShape)
+  .strict();
+export const browserSessionIdInputSchema = z
+  .object(browserSessionIdShape)
+  .strict();
+export const browserSettingsIdInputSchema = z
+  .object(browserSettingsIdShape)
+  .strict();
 
 export interface ToolDefinition<Input> {
   readonly name: string;
@@ -239,6 +487,80 @@ export const toolDefinitions = [
     inputSchema: accountUsageInputSchema,
     execute: (client, input) => client.getAccountUsage(input),
     summarize: () => "Fetched account usage."
+  }),
+  defineTool({
+    name: "create_browser_session",
+    description:
+      "Start a Cloud Browser with a Floppydata proxy attached. Drive it with Puppeteer connect({ browserWSEndpoint }) or Playwright chromium.connectOverCDP() using the returned connectUrl. The smallest request is {}. Stop the session when done to stop billing.",
+    inputShape: browserSessionCreateShape,
+    inputSchema: browserSessionCreateInputSchema,
+    execute: (client, input) => client.createBrowserSession(input),
+    summarize: (output) => summarizeBrowserSession(output)
+  }),
+  defineTool({
+    name: "list_browser_sessions",
+    description:
+      "List Cloud Browser session history, newest first, with cursor pagination.",
+    inputShape: browserSessionListShape,
+    inputSchema: browserSessionListInputSchema,
+    execute: (client, input) => client.listBrowserSessions(input),
+    summarize: (output) => summarizeBrowserSessions(output)
+  }),
+  defineTool({
+    name: "get_browser_session",
+    description:
+      "Get a Cloud Browser session's state. Returns a freshly signed connectUrl while the session is running.",
+    inputShape: browserSessionIdShape,
+    inputSchema: browserSessionIdInputSchema,
+    execute: (client, input) => client.getBrowserSession(input),
+    summarize: (output) => summarizeBrowserSession(output)
+  }),
+  defineTool({
+    name: "stop_browser_session",
+    description:
+      "Stop a Cloud Browser session and save its persistent browser state. Safe to call more than once.",
+    inputShape: browserSessionIdShape,
+    inputSchema: browserSessionIdInputSchema,
+    execute: (client, input) => client.stopBrowserSession(input),
+    summarize: (output) => summarizeBrowserSession(output)
+  }),
+  defineTool({
+    name: "create_browser_live_view",
+    description:
+      "Get a URL a human can open to watch and control a running Cloud Browser session. Rejected while a CDP client is connected.",
+    inputShape: browserSessionIdShape,
+    inputSchema: browserSessionIdInputSchema,
+    execute: (client, input) => client.createBrowserLiveView(input),
+    summarize: (output) => {
+      const liveViewUrl = readString(output.liveViewUrl);
+      return liveViewUrl
+        ? `Live view: ${liveViewUrl}`
+        : "Created browser live view.";
+    }
+  }),
+  defineTool({
+    name: "delete_browser_session",
+    description:
+      "Delete an ended Cloud Browser session from history. Persistent browser settings are kept; use delete_browser_settings for those.",
+    inputShape: browserSessionIdShape,
+    inputSchema: browserSessionIdInputSchema,
+    execute: async (client, input) => {
+      await client.deleteBrowserSession(input);
+      return { deleted: true, sessionId: input.sessionId };
+    },
+    summarize: (output) => `Deleted browser session ${String(output.sessionId)}.`
+  }),
+  defineTool({
+    name: "delete_browser_settings",
+    description:
+      "Permanently delete saved Cloud Browser settings and browser state (cookies, storage). Fails while a session using them is running.",
+    inputShape: browserSettingsIdShape,
+    inputSchema: browserSettingsIdInputSchema,
+    execute: async (client, input) => {
+      await client.deleteBrowserSettings(input);
+      return { deleted: true, settingsId: input.settingsId };
+    },
+    summarize: (output) => `Deleted browser settings ${String(output.settingsId)}.`
   })
 ];
 
@@ -323,6 +645,28 @@ function summarizeStaticProxies(output: JsonObject): string {
   }
 
   return "Fetched static proxies.";
+}
+
+function summarizeBrowserSession(output: JsonObject): string {
+  const id = readString(output.id);
+  const status = readString(output.status);
+
+  if (!id || !status) {
+    return "Fetched browser session.";
+  }
+
+  return readString(output.connectUrl)
+    ? `Browser session ${id} is ${status}. Connect with Puppeteer or Playwright over connectUrl.`
+    : `Browser session ${id} is ${status}.`;
+}
+
+function summarizeBrowserSessions(output: JsonObject): string {
+  if (Array.isArray(output.items)) {
+    const more = readString(output.nextCursor) ? " More are available via nextCursor." : "";
+    return `Found ${output.items.length} browser sessions.${more}`;
+  }
+
+  return "Fetched browser sessions.";
 }
 
 function readString(value: unknown): string | undefined {

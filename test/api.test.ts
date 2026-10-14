@@ -168,4 +168,48 @@ describe("FloppydataApiClient", () => {
       "network failed for [REDACTED_API_KEY] and http://user:[REDACTED_PASSWORD]@host:123"
     );
   });
+
+  it("treats empty 204 responses as an empty object", async () => {
+    const { calls, fetcher } = createMockFetcher(
+      new Response(null, { status: 204 })
+    );
+    const client = new FloppydataApiClient({
+      apiKey: "test-api-key",
+      fetcher
+    });
+
+    await expect(
+      client.deleteBrowserSession({
+        sessionId: "58e531ee-16ca-49d0-8722-b425d154cc10"
+      })
+    ).resolves.toEqual({});
+    expect(calls[0]?.init?.method).toBe("DELETE");
+    expect(calls[0]?.init?.body).toBeUndefined();
+  });
+
+  it("redacts signed browser connect tokens from errors", async () => {
+    const { fetcher } = createMockFetcher(
+      jsonResponse(
+        {
+          error: {
+            message:
+              "Cannot reach wss://api.floppydata.net/v2/browser/sessions/x/connect?token=signed-token"
+          }
+        },
+        409
+      )
+    );
+    const client = new FloppydataApiClient({
+      apiKey: "test-api-key",
+      fetcher
+    });
+
+    await expect(
+      client.createBrowserLiveView({
+        sessionId: "58e531ee-16ca-49d0-8722-b425d154cc10"
+      })
+    ).rejects.toThrow(
+      "Cannot reach wss://api.floppydata.net/v2/browser/sessions/x/connect?token=[REDACTED_TOKEN]"
+    );
+  });
 });
