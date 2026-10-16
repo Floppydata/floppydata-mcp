@@ -103,8 +103,58 @@ export class FloppydataApiClient {
     });
   }
 
+  async createBrowserSession(input: unknown): Promise<JsonObject> {
+    return this.request("POST", "/v2/browser/sessions", { body: input });
+  }
+
+  async listBrowserSessions(input: {
+    status?: string;
+    cursor?: string;
+    limit?: number;
+  }): Promise<JsonObject> {
+    return this.request("GET", "/v2/browser/sessions", {
+      query: {
+        status: input.status,
+        cursor: input.cursor,
+        limit: input.limit
+      }
+    });
+  }
+
+  async getBrowserSession(input: { sessionId: string }): Promise<JsonObject> {
+    return this.request("GET", browserSessionPath(input.sessionId));
+  }
+
+  async stopBrowserSession(input: { sessionId: string }): Promise<JsonObject> {
+    return this.request("POST", `${browserSessionPath(input.sessionId)}/stop`);
+  }
+
+  async createBrowserLiveView(input: {
+    sessionId: string;
+  }): Promise<JsonObject> {
+    return this.request(
+      "POST",
+      `${browserSessionPath(input.sessionId)}/live-view`
+    );
+  }
+
+  async deleteBrowserSession(input: {
+    sessionId: string;
+  }): Promise<JsonObject> {
+    return this.request("DELETE", browserSessionPath(input.sessionId));
+  }
+
+  async deleteBrowserSettings(input: {
+    settingsId: string;
+  }): Promise<JsonObject> {
+    return this.request(
+      "DELETE",
+      `/v2/browser/settings/${encodeURIComponent(input.settingsId)}`
+    );
+  }
+
   private async request(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     path: string,
     options: RequestOptions = {}
   ): Promise<JsonObject> {
@@ -182,6 +232,10 @@ export function redactSecrets(value: unknown, apiKey?: string): string {
   }
 
   return redactString(JSON.stringify(redactUnknown(value, apiKey)), apiKey);
+}
+
+function browserSessionPath(sessionId: string): string {
+  return `/v2/browser/sessions/${encodeURIComponent(sessionId)}`;
 }
 
 function appendQuery(url: URL, query?: Record<string, QueryValue>): void {
@@ -282,10 +336,12 @@ function redactString(value: string, apiKey?: string): string {
     output = output.split(apiKey).join("[REDACTED_API_KEY]");
   }
 
-  return output.replace(
-    /([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)([^@\s/]+)(@)/gi,
-    "$1[REDACTED_PASSWORD]$3"
-  );
+  return output
+    .replace(
+      /([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)([^@\s/]+)(@)/gi,
+      "$1[REDACTED_PASSWORD]$3"
+    )
+    .replace(/([?&]token=)[^&\s"']+/gi, "$1[REDACTED_TOKEN]");
 }
 
 function isSecretField(key: string): boolean {

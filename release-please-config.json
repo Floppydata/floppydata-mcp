@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "ad2a441ca374a39de3458cb7066c6685e63508d5",
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "package-name": "@floppydata/mcp",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": false,
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
+      "extra-files": ["src/server.ts"]
+    }
+  }
+}

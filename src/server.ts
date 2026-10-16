@@ -27,7 +27,7 @@ export function createFloppydataMcpServer(
   });
   const server = new McpServer({
     name: "floppydata",
-    version: "0.1.0"
+    version: "0.1.0" // x-release-please-version
   });
 
   for (const definition of toolDefinitions) {

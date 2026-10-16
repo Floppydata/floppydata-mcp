@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: Publish an existing release tag (e.g. v0.2.1) to npm, if its automatic publish failed
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # Keeps a release PR open with the next version and changelog, derived from
+  # Conventional Commit messages. Merging that PR tags the release.
+  release-please:
+    if: ${{ !inputs.publish_tag }}
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    # !cancelled(): still run when release-please was skipped for a manual publish.
+    if: ${{ !cancelled() && (inputs.publish_tag || needs.release-please.outputs.release_created == 'true') }}
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      # npm trusted publishing: the registry trusts this workflow via OIDC,
+      # so no npm token is stored. Also signs provenance. The trust only
+      # allows staging: a maintainer approves each release with 2FA.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.publish_tag || needs.release-please.outputs.tag_name }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          # npm >= 11.5.1 is required for trusted publishing.
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - run: npm stage publish --provenance --access public
+      - run: >-
+          echo "Staged $(jq -r '.name + "@" + .version' package.json). Approve it with 2FA:
+          npm stage list, then npm stage approve <stage-id>" >> "$GITHUB_STEP_SUMMARY"
